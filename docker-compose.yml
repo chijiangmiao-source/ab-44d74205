@@ -1,0 +1,30 @@
+services:
+  sheet:
+    build: .
+    image: calibration-sheet:latest
+    environment:
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8080"
+      TABLE_SIZE: "128"
+    ports:
+      # Configurable host port: APP_PORT=9090 docker compose up --build
+      - "${APP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request as u; r=u.urlopen('http://127.0.0.1:8080/health',timeout=2); assert json.loads(r.read())['status']=='ok'"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # One-shot acceptance:  docker compose run --rm verify
+  # Runs build checks, code tests, then boots an in-container server and runs
+  # the page/health API+HTTP smoke; exits with the acceptance result code.
+  verify:
+    build: .
+    image: calibration-sheet:latest
+    environment:
+      APP_HOST: "127.0.0.1"
+      APP_PORT: "8080"
+      TABLE_SIZE: "128"
+    command: ["./verify"]
+    restart: "no"

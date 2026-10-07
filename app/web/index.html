@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>地面标定推导表</title>
+<style>
+  :root {
+    --bg:#0f1420; --panel:#171e2e; --line:#27314a; --ink:#e6ecf8;
+    --muted:#8a97b3; --accent:#5aa9ff; --good:#37d39b; --bad:#ff6b7a;
+    --warn:#ffc857; --chip:#22304d;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 "Segoe UI",system-ui,sans-serif;
+         background:var(--bg); color:var(--ink); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line);
+           display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  header .gen { color:var(--muted); }
+  main { display:grid; grid-template-columns:minmax(360px,1fr) 420px;
+         gap:16px; padding:16px 20px; }
+  @media (max-width:980px){ main{ grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line);
+           border-radius:10px; padding:14px; }
+  .panel h2 { font-size:13px; margin:0 0 10px; color:var(--muted);
+              text-transform:uppercase; letter-spacing:.08em; }
+  #grid { display:grid; gap:6px;
+          grid-template-columns:repeat(auto-fill,minmax(86px,1fr)); }
+  .cell { border:1px solid var(--line); border-radius:8px; padding:6px 8px;
+          cursor:pointer; background:#121929; min-height:58px; }
+  .cell:hover { border-color:var(--accent); }
+  .cell.sel { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .cell.formula { border-left:3px solid var(--accent); }
+  .cell.const { border-left:3px solid var(--good); }
+  .cell .nm { font-weight:600; color:var(--muted); font-size:12px; }
+  .cell .vl { font-family:ui-monospace,Menlo,Consolas,monospace;
+              font-size:13px; white-space:nowrap; overflow:hidden;
+              text-overflow:ellipsis; }
+  .cell .g { float:right; color:var(--muted); font-size:11px; }
+  label { display:block; margin:8px 0 4px; color:var(--muted); font-size:12px; }
+  select, input, textarea { width:100%; background:#101728; color:var(--ink);
+          border:1px solid var(--line); border-radius:8px; padding:8px 10px;
+          font:inherit; }
+  textarea { min-height:64px; resize:vertical;
+             font-family:ui-monospace,Menlo,Consolas,monospace; }
+  button { background:var(--accent); color:#08111f; border:0; border-radius:8px;
+           padding:9px 16px; font-weight:600; cursor:pointer; margin-top:12px; }
+  button.secondary { background:var(--chip); color:var(--ink); }
+  .row { display:flex; gap:8px; }
+  .verdict { margin-top:14px; }
+  .verdict.ok .banner { color:var(--good); }
+  .verdict.fail .banner { color:var(--bad); }
+  .banner { font-weight:700; margin-bottom:8px; }
+  .section { margin-top:10px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { background:var(--chip); border-radius:999px; padding:2px 10px;
+          font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  .chip.add { background:#14432f; color:var(--good); }
+  .chip.rem { background:#4a1d26; color:var(--bad); }
+  .chain { font-family:ui-monospace,Menlo,Consolas,monospace;
+           background:#2a1218; border:1px solid #55232d; border-radius:8px;
+           padding:8px 10px; color:#ffd7dc; word-break:break-all; }
+  .hint { color:var(--muted); font-size:12px; margin-top:6px; }
+  code { background:#101728; border:1px solid var(--line); border-radius:4px;
+         padding:0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>地面标定 · 推导表</h1>
+  <span class="gen">全局缓存代次：<b id="gen">0</b></span>
+  <span class="gen">至多 128 格 · 有符号 64 位整数 · 分支感知依赖</span>
+</header>
+<main>
+  <section class="panel">
+    <h2>表格（点击格子选择候选）</h2>
+    <div id="grid"></div>
+    <div class="row">
+      <button class="secondary" id="loadSample">载入示例场景</button>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <h2>候选修改与裁决</h2>
+    <label>候选格</label>
+    <input id="idx" value="0" inputmode="numeric">
+    <label>类型</label>
+    <select id="kind">
+      <option value="formula">公式（+ - * /、cN 引用、if(条件,真,假)）</option>
+      <option value="const">有符号 64 位整数常量</option>
+    </select>
+    <label id="rawLabel">公式文本</label>
+    <textarea id="raw" placeholder="例如 if(c1, c2 + c3, c4 * 2)"></textarea>
+    <div class="row"><button id="submit">提交候选</button></div>
+    <div class="hint">切换条件源后，仅新分支实际进入的引用会成为活动依赖；
+      其余语法分支不再计入，也不会沿用旧分支缓存。</div>
+    <div id="verdict" class="verdict"></div>
+  </aside>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
