@@ -1,0 +1,22 @@
+# 地面标定推导表：Compose 在可配置宿主机端口（HOST_PORT，默认 8080）提供页面访问与健康响应。
+name: derivetable
+
+services:
+  app:
+    build: .
+    image: derivetable-app:latest
+    environment:
+      PORT: "8080"
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3); sys.exit(0 if r.status==200 else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped

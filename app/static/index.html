@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>地面标定推导表</title>
+<style>
+:root{--bg:#0f1420;--panel:#182034;--line:#2a3550;--txt:#dbe4ff;--mut:#7f8db3;
+--ok:#34d399;--bad:#f87171;--warn:#fbbf24;--acc:#60a5fa}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--txt)}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 18px;background:var(--panel);border-bottom:1px solid var(--line)}
+h1{font-size:18px;margin:0}
+.badge{padding:3px 10px;border-radius:999px;background:#0d1526;border:1px solid var(--line);font-size:12px;color:var(--mut)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;background:var(--bad)}
+.dot.on{background:var(--ok)}
+main{display:grid;grid-template-columns:minmax(0,1fr) 430px;gap:14px;padding:14px;align-items:start}
+@media(max-width:1100px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+#grid{display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
+.cell{border:1px solid var(--line);border-radius:8px;padding:5px 6px;cursor:pointer;background:#101a2e;min-height:60px}
+.cell:hover{border-color:var(--acc)}
+.cell.sel{outline:2px solid var(--acc)}
+.cell .cid{font-size:11px;color:var(--mut)}
+.cell .val{font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-all}
+.cell .gen{font-size:10px;color:var(--warn)}
+.cell.empty .val{color:#465}
+.cell.hit{box-shadow:inset 0 0 0 2px #26395c}
+.cell.redone{border-color:var(--ok);box-shadow:0 0 6px #34d39955}
+button{background:var(--acc);color:#06101f;border:0;border-radius:8px;padding:7px 12px;font-weight:600;cursor:pointer;margin:2px 4px 2px 0}
+button.ghost{background:#223052;color:var(--txt)}
+button.warn{background:var(--warn)}
+input{width:100%;background:#0c1322;border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px;font-family:ui-monospace,Consolas,monospace;margin:6px 0}
+h2{font-size:14px;margin:14px 0 8px;color:var(--acc)}
+h2:first-child{margin-top:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.chip{background:#0d1526;border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.chip.add{border-color:var(--ok);color:var(--ok)}
+.chip.del{border-color:var(--bad);color:var(--bad);text-decoration:line-through}
+.chain .chip{border-color:var(--bad);color:#fca5a5}
+.arrow{color:var(--mut)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+td,th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;font-family:ui-monospace,Consolas,monospace}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.mut{color:var(--mut)}.warn{color:var(--warn)}
+#edges{max-height:230px;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.7}
+#verdictBody{max-height:520px;overflow:auto}
+.kv{font-size:12px;color:var(--mut);line-height:1.8}
+.kv b{color:var(--txt);font-family:ui-monospace,Consolas,monospace}
+</style>
+</head>
+<body>
+<header>
+  <h1>地面标定推导表 <span class="mut">128 格 · int64 · 活动分支依赖</span></h1>
+  <span class="badge"><span id="healthDot" class="dot"></span>健康 <span id="healthGen"></span></span>
+  <span class="badge">当前代次 <b id="genNow">0</b></span>
+  <span class="badge mut">公式：常量 / + - * / / 单元格引用 / if(条件,真值,假值)</span>
+</header>
+<main>
+  <section class="panel">
+    <h2>推导表（点击格子编辑）</h2>
+    <div id="grid"></div>
+  </section>
+  <aside>
+    <div class="panel">
+      <h2>候选修改</h2>
+      <div id="selInfo" class="kv">未选中单元格</div>
+      <input id="editInput" placeholder="例如：if(C1, A1, A2) 或 42；留空并提交 = 清空该格" spellcheck="false">
+      <div>
+        <button id="btnSubmit">提交候选</button>
+        <button id="btnClear" class="ghost">清空该格</button>
+        <button id="btnReset" class="warn">重置全表</button>
+      </div>
+      <h2>示例场景</h2>
+      <div>
+        <button class="ghost" id="preset1">条件切换</button>
+        <button class="ghost" id="preset2">部分下游发布</button>
+        <button class="ghost" id="preset3">失败回滚</button>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:14px">
+      <h2>裁决结果</h2>
+      <div id="verdictBody" class="kv">尚未提交候选</div>
+    </div>
+    <div class="panel" style="margin-top:14px">
+      <h2>活动依赖边（左 依赖 右）</h2>
+      <div id="edges"><span class="mut">（空）</span></div>
+    </div>
+  </aside>
+</main>
+<script>
+let state = null, selected = null, lastReport = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const KIND_CN = {cycle:'环路', unknown_ref:'未知引用', div_zero:'除零', overflow:'64位溢出', parse:'解析错误'};
+
+async function api(path, opts){
+  const r = await fetch(path, opts);
+  return {status: r.status, body: await r.json()};
+}
+async function refresh(){
+  const r = await api('/api/state');
+  state = r.body;
+  $('genNow').textContent = state.generation;
+  renderGrid(); renderEdges(); renderSelInfo();
+}
+function cellOf(id){ return state.cells.find(c => c.id === id); }
+function fmt(v){ return v === null || v === undefined ? '—' : String(v); }
+
+function renderGrid(){
+  const recomputed = new Set(), hits = new Set();
+  if (lastReport && lastReport.status === 'published'){
+    lastReport.recomputed.forEach(r => recomputed.add(r.cell));
+    lastReport.cacheHits.forEach(h => hits.add(h.cell));
+  }
+  $('grid').innerHTML = state.cells.map(c => {
+    const cls = ['cell'];
+    if (!c.hasValue) cls.push('empty');
+    if (c.id === selected) cls.push('sel');
+    if (recomputed.has(c.id)) cls.push('redone');
+    else if (hits.has(c.id)) cls.push('hit');
+    return `<div class="${cls.join(' ')}" data-id="${c.id}">
+      <div class="cid">${c.id}</div>
+      <div class="val">${esc(fmt(c.value))}</div>
+      <div class="gen">代次 ${c.generation}</div></div>`;
+  }).join('');
+  document.querySelectorAll('.cell').forEach(el =>
+    el.addEventListener('click', () => { selected = el.dataset.id; renderGrid(); renderSelInfo(); }));
+}
+function renderEdges(){
+  $('edges').innerHTML = state.edges.length
+    ? state.edges.map(e => `<div>${e.from} <span class="arrow">─依赖→</span> ${e.to}</div>`).join('')
+    : '<span class="mut">（空）</span>';
+}
+function renderSelInfo(){
+  if (!selected){ $('selInfo').innerHTML = '未选中单元格'; return; }
+  const c = cellOf(selected);
+  const rev = state.edges.filter(e => e.to === selected).map(e => e.from);
+  $('selInfo').innerHTML =
+    `选中 <b>${c.id}</b>　值 <b>${esc(fmt(c.value))}</b>　代次 <b>${c.generation}</b><br>` +
+    `内容 <b>${esc(c.raw || '（空）')}</b><br>` +
+    `活动依赖 <b>${c.deps.join(', ') || '（无）'}</b><br>` +
+    `被依赖 <b>${rev.join(', ') || '（无）'}</b>`;
+  $('editInput').value = c.raw || '';
+}
+async function submit(input){
+  if (!selected){ $('verdictBody').innerHTML = '<span class="bad">请先点击选择一个单元格</span>'; return; }
+  const r = await api('/api/candidate', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({cell: selected, input})});
+  lastReport = r.body;
+  renderVerdict(r.body);
+  await refresh();
+}
+function chip(t, cls){ return `<span class="chip ${cls||''}">${esc(t)}</span>`; }
+function renderVerdict(rep){
+  let h = '';
+  if (rep.status === 'published'){
+    h += `<div class="ok">✔ 已发布 · 新代次 ${rep.generation}</div>`;
+    h += `<div style="margin:6px 0">受影响：${rep.affected.map(a=>chip(a)).join(' ') || '（无）'}</div>`;
+    h += `<h2>重算（${rep.recomputed.length}）</h2><table><tr><th>格</th><th>旧值→新值</th><th>代次</th><th>新活动依赖</th></tr>` +
+      rep.recomputed.map(r =>
+        `<tr><td>${r.cell}</td><td>${esc(fmt(r.oldValue))} → <b class="ok">${esc(fmt(r.newValue))}</b></td>` +
+        `<td>${r.oldGeneration} → ${r.newGeneration}</td>` +
+        `<td>${r.depsAfter.join(', ') || '（无）'}</td></tr>`).join('') + '</table>';
+    h += `<h2>依赖变更（${rep.depChanges.length}）</h2>`;
+    h += rep.depChanges.length ? rep.depChanges.map(d =>
+      `<div style="margin:4px 0">${chip(d.cell)} ` +
+      d.added.map(a => chip('+'+a,'add')).join(' ') + ' ' +
+      d.removed.map(a => chip('−'+a,'del')).join(' ') + '</div>').join('')
+      : '<div class="mut">（无）</div>';
+    h += `<h2>缓存命中（${rep.cacheHits.length}）</h2><div class="chips">` +
+      (rep.cacheHits.map(x => chip(`${x.cell}=${x.value}@代${x.generation}`)).join('') || '（无）') + '</div>';
+  } else {
+    const e = rep.error || {};
+    h += `<div class="bad">✘ 已拒绝 · 状态保持修改前（代次 ${rep.generation}）</div>`;
+    h += `<div style="margin:6px 0">错误类型：<b class="bad">${KIND_CN[e.kind] || e.kind}</b><br>` +
+         `<span class="mut">${esc(e.message || '')}</span></div>`;
+    h += `<h2>失败链路（候选格 → 首个失败点）</h2><div class="chips chain">` +
+      (e.chain || []).map(c => chip(c)).join('<span class="arrow"> → </span>') + '</div>';
+  }
+  $('verdictBody').innerHTML = h;
+}
+async function runPreset(steps){
+  await api('/api/reset', {method:'POST'});
+  lastReport = null; await refresh();
+  for (const [cell, input] of steps){
+    selected = cell;
+    await submit(input);
+    await new Promise(r => setTimeout(r, 350));
+  }
+}
+$('btnSubmit').addEventListener('click', () => submit($('editInput').value));
+$('btnClear').addEventListener('click', () => submit(''));
+$('btnReset').addEventListener('click', async () => {
+  await api('/api/reset', {method:'POST'}); lastReport = null;
+  $('verdictBody').textContent = '已重置'; await refresh();
+});
+$('preset1').addEventListener('click', () => runPreset([
+  ['A1','10'], ['A2','20'], ['C1','0'], ['B1','if(C1, A1, A2)'], ['C1','1']]));
+$('preset2').addEventListener('click', () => runPreset([
+  ['A1','2'], ['B1','A1 + 1'], ['C1','0'], ['D1','if(C1, A1, 100)'], ['E1','7'], ['A1','5']]));
+$('preset3').addEventListener('click', () => runPreset([
+  ['A5','1'], ['B5','7'], ['C5','B5 / A5'], ['A5','0']]));
+async function pollHealth(){
+  try {
+    const r = await fetch('/health');
+    const j = await r.json();
+    $('healthDot').classList.toggle('on', r.ok && j.status === 'ok');
+    $('healthGen').textContent = r.ok ? `代次 ${j.generation}` : '';
+  } catch { $('healthDot').classList.remove('on'); }
+}
+setInterval(pollHealth, 3000);
+pollHealth();
+refresh();
+</script>
+</body>
+</html>

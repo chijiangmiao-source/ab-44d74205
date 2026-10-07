@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# 一次性验收：构建检查 → 代码测试 → 启动服务（Compose 优先）→ 页面/健康冒烟与场景验收 → 自动清理并以退出码报告。
+# 用法：./verify            （宿主机端口默认 8080）
+#       HOST_PORT=9090 ./verify
+set -uo pipefail
+cd "$(dirname "$0")"
+
+HOST_PORT="${HOST_PORT:-8080}"
+BASE_URL="http://127.0.0.1:${HOST_PORT}"
+SERVER_PID=""
+USE_COMPOSE=0
+FAILED=0
+
+log() { printf '\n\033[1;34m== %s ==\033[0m\n' "$*"; }
+
+cleanup() {
+  if [ "$USE_COMPOSE" = "1" ]; then
+    HOST_PORT="$HOST_PORT" docker compose down >/dev/null 2>&1
+  fi
+  if [ -n "$SERVER_PID" ]; then
+    kill "$SERVER_PID" 2>/dev/null
+    wait "$SERVER_PID" 2>/dev/null
+  fi
+}
+trap cleanup EXIT
+
+log "第 1 阶段：构建检查（Python 编译）"
+if ! python3 -m compileall -q app acceptance tests server.py; then
+  echo "构建检查失败"
+  exit 1
+fi
+echo "构建检查通过"
+
+log "第 2 阶段：代码测试（引擎单元测试 + HTTP 集成测试）"
+if ! python3 -m unittest discover -s tests -t . -v; then
+  echo "代码测试失败"
+  exit 1
+fi
+
+log "第 3 阶段：启动服务（宿主机端口 ${HOST_PORT}）"
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  USE_COMPOSE=1
+  echo "使用 Docker Compose 启动"
+  if ! HOST_PORT="$HOST_PORT" docker compose up -d --build; then
+    echo "Compose 启动失败"
+    exit 1
+  fi
+else
+  echo "未检测到 Docker Compose，直接以本地进程启动同一应用（镜像内为同一入口 server.py）"
+  PORT="$HOST_PORT" python3 server.py > /tmp/derivetable-verify-server.log 2>&1 &
+  SERVER_PID=$!
+fi
+
+log "第 4 阶段：API/HTTP 冒烟与场景验收（条件切换 / 部分下游发布 / 失败回滚）"
+if ! python3 -m acceptance.run --addr "$BASE_URL" --wait 60; then
+  FAILED=1
+fi
+
+echo
+if [ "$FAILED" = "0" ]; then
+  log "验收通过"
+else
+  log "验收失败"
+fi
+exit "$FAILED"
